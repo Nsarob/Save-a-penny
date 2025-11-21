@@ -209,3 +209,17 @@ class ReceiptSubmissionSerializer(serializers.Serializer):
             raise serializers.ValidationError("Receipt must be PDF, JPEG, or PNG")
         
         return value
+
+
+class ApprovalActionSerializer(serializers.Serializer):
+    """Serializer for approve/reject actions"""
+    approved = serializers.BooleanField(required=True, help_text="True=Approve, False=Reject")
+    comments = serializers.CharField(required=False, allow_blank=True, max_length=500)
+    
+    def validate(self, data):
+        """Ensure comments are provided for rejections"""
+        if not data['approved'] and not data.get('comments'):
+            raise serializers.ValidationError({
+                "comments": "Comments are required when rejecting a request"
+            })
+        return data

@@ -8,6 +8,8 @@ app_name = "purchase_requests"
 # Router for viewsets
 router = DefaultRouter()
 router.register(r'requests', views.StaffRequestViewSet, basename='staff-request')
+router.register(r'approvals', views.ApproverRequestViewSet, basename='approver-request')
+router.register(r'finance', views.FinanceRequestViewSet, basename='finance-request')
 
 urlpatterns = [
     # Authentication endpoints
