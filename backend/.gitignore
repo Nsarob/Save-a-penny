@@ -32,6 +32,10 @@ db.sqlite3-journal
 /staticfiles
 /static
 
+# Testing files
+create_test_users.py
+API_TESTING_GUIDE.md
+
 # Environment variables
 .env
 .env.local
