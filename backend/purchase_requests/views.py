@@ -13,6 +13,7 @@ from .serializers import (
 )
 from .models import PurchaseRequest, RequestStatus
 from .permissions import IsStaff, IsAnyApprover, IsFinance, CanEditRequest
+from .document_processing import process_proforma_upload, process_receipt_upload
 
 
 class RegisterView(generics.CreateAPIView):
@@ -122,8 +123,18 @@ class StaffRequestViewSet(viewsets.ModelViewSet):
         return PurchaseRequestDetailSerializer
     
     def perform_create(self, serializer):
-        """Set created_by to current user"""
-        serializer.save(created_by=self.request.user)
+        """Set created_by to current user and process proforma if uploaded"""
+        instance = serializer.save(created_by=self.request.user)
+        
+        # Process proforma if uploaded
+        if instance.proforma:
+            try:
+                metadata = process_proforma_upload(instance.proforma)
+                instance.proforma_metadata = metadata
+                instance.save()
+            except Exception as e:
+                # Log error but don't fail the request creation
+                print(f"Error processing proforma: {e}")
     
     def update(self, request, *args, **kwargs):
         """Only allow updating pending requests"""
@@ -172,6 +183,24 @@ class StaffRequestViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         
         purchase_request.receipt = serializer.validated_data['receipt']
+        
+        # Process and validate receipt against PO
+        try:
+            po_metadata = purchase_request.purchase_order_metadata or {}
+            if po_metadata:
+                validation_results = process_receipt_upload(
+                    purchase_request.receipt,
+                    po_metadata
+                )
+                purchase_request.receipt_validation = validation_results
+        except Exception as e:
+            # Log error but don't fail receipt submission
+            print(f"Error validating receipt: {e}")
+            purchase_request.receipt_validation = {
+                "error": str(e),
+                "validated": False
+            }
+        
         purchase_request.save()
         
         return Response(
@@ -347,7 +376,39 @@ class ApproverRequestViewSet(viewsets.ReadOnlyModelViewSet):
                         purchase_request.status = RequestStatus.APPROVED
                         purchase_request.approved_at = timezone.now()
                         purchase_request.save()
-                        # TODO: Trigger automatic PO generation here
+                        
+                        # Trigger automatic PO generation
+                        try:
+                            from .document_processing import generate_purchase_order
+                            
+                            # Prepare request data
+                            request_data = {
+                                'title': purchase_request.title,
+                                'description': purchase_request.description,
+                                'amount': str(purchase_request.amount),
+                                'items': [
+                                    {
+                                        'name': item.item_name,
+                                        'description': item.description,
+                                        'quantity': item.quantity,
+                                        'unit_price': str(item.unit_price),
+                                        'total': str(item.total_price)
+                                    }
+                                    for item in purchase_request.items.all()
+                                ]
+                            }
+                            
+                            # Generate PO using proforma metadata
+                            proforma_metadata = purchase_request.proforma_metadata or {}
+                            po_data = generate_purchase_order(request_data, proforma_metadata)
+                            
+                            if po_data.get('generated'):
+                                purchase_request.purchase_order_metadata = po_data
+                                purchase_request.save()
+                                
+                        except Exception as e:
+                            # Log error but don't fail the approval
+                            print(f"Error generating PO: {e}")
         
         return Response(
             PurchaseRequestDetailSerializer(purchase_request).data,
